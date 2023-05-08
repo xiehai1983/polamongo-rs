@@ -24,6 +24,7 @@
 //! }
 //!
 #![deny(clippy::all)]
+use mongodb::bson::doc;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 mod buffer;
@@ -118,6 +119,8 @@ impl AnonymousScan for MongoScan {
         find_options.projection = projection;
         find_options.batch_size = self.batch_size.map(|b| b as u32);
 
+        
+
         let schema = scan_opts.output_schema.unwrap_or(scan_opts.schema);
 
         // if no n_rows we need to get the count from mongo.
@@ -125,6 +128,12 @@ impl AnonymousScan for MongoScan {
             .n_rows
             .unwrap_or_else(|| collection.estimated_document_count(None).unwrap() as usize);
 
+        // if n_rows is not `none`
+        let n_rows_num = scan_opts.n_rows.unwrap_or(0);
+        if n_rows_num > 0 {
+            find_options.sort = Some(doc! {"_id": -1});
+        }
+        
         let mut n_threads = self.n_threads.unwrap_or_else(|| POOL.current_num_threads());
 
         if n_rows < 128 {
@@ -163,6 +172,13 @@ impl AnonymousScan for MongoScan {
         if self.rechunk {
             df.rechunk();
         }
+
+        if n_rows_num > 0 {
+            // re-sort the result if the `n_rows` is set.
+            let df_reverse = df.sort(["_id"], false)?;
+            return Ok(df_reverse);
+        }
+
         Ok(df)
     }
 
@@ -172,6 +188,8 @@ impl AnonymousScan for MongoScan {
         let infer_options = FindOptions::builder()
             .limit(infer_schema_length.map(|i| i as i64))
             .build();
+
+        println!("{:?}", infer_options);
 
         let res = collection
             .find(None, Some(infer_options))
